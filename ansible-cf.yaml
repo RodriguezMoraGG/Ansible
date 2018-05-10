@@ -1,0 +1,654 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: 'Launch an RedHat/CentOS instance with Tags, adds 2 volumes (log and app), OS logs redirected to CW Logs and Sentinel user latest public key. Template assumes realmd and OTP packages previously installed on AMI'
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: 'Amazon EC2 Instance Configuration'
+        Parameters:
+          - NameTag
+          - Hostname
+          - VPC
+          - Subnet
+          - SecurityGroup
+          - KeyPair
+          - InstanceType
+          - ElasticIP
+          - RootVolumeSize
+          - AppVolumeSize
+      -
+        Label:
+          default: 'Post-launch Configuration'
+        Parameters:
+          - CloudwatchRegion
+          - S3LogConfigurationFile
+          - SentinelPubKeyUrl
+          - AnsiblePubKeyUrl
+      -
+        Label:
+          default: 'Project Metadata Tags'
+        Parameters:
+          - ProjectIDTag
+          - ProjectNameTag
+          - ProjectAdminGroup
+          - ApplicationNameTag
+          - ApplicationVersionTag
+          - CustomerTag
+          - BusinessOwnerTag
+          - TechnicalOwnerTag
+          - ProjectManagerTag
+          - DepartmentTag
+          - DataPIITag
+          - DataPCITag
+          - DataHighestClassificationTag
+          - EnvironmentTag
+          - ServerOSTag
+          - AMIidParam
+          - TemplateTag
+          - ResourceFunctionTag
+          - BackupTag
+          - RotateImageTag
+          - RetentionTag
+      -
+        Label:
+          default: 'Security access'
+        Parameters:
+          - AllowUsers
+          - AllowGroups
+          - DenyUsers
+          - DenyGroups
+
+Parameters:
+  Subnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: 'Instance Subnet ID'
+
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: 'Instance VPC ID'
+
+  SecurityGroup:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: 'Instance Security Group ID(s)'
+
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: 'Instance key pair name'
+
+  NameTag:
+    Type: String
+    Default : 'ec2-us-east-1-1a-d-tomcat-instance-test'
+    Description: 'EC2 Instance Name i.e. ec2-us-east-1-1a-s-wat-app-AmzLinux1-1'
+
+  Hostname:
+    Type: String
+    Default: 'USE1ADRATTOMAPPC01'
+    Description: 'Server Hostname i.e. USE1ASAWATAPP01'
+
+  InstanceType:
+    Type: String
+    Default: t2.small
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+      - t2.xlarge
+      - t2.2xlarge
+    Description: 'Instance Type'
+
+  ElasticIP:
+    Type: String
+    Default: 'No'
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Description: 'Assign an Elastic IP to the instance?'
+
+  RootVolumeSize:
+    Type: 'Number'
+    Default: 20
+    Description: 'Instance volume size in GB'
+
+  AppVolumeSize:
+    Type: 'Number'
+    Default: 25
+    Description: 'Application EBS Volume Size in GB'
+
+  AllowUsers:
+    Type: String
+    Description: 'Add user, separate by comma, to allow access to server (if empty, allow all user access)'
+  AllowGroups:
+    Type: String
+    Description: 'Add groups, separate by comma, to allow access to server (if empty, allow all groups access)'
+  DenyUsers:
+    Type: String
+    Description: 'Add user, separate by comma, to deny access to server (if empty, allow all user access)'
+  DenyGroups:
+    Type: String
+    Description: 'Add groups, separate by comma, to deny access to server (if empty, allow all groups access)'
+
+  ProjectAdminGroup:
+    Type: 'String'
+    Default: ''
+    Description: 'Project Admin Group to give sudo to server (i.e. aws-sandbox-arch, aws-sandbox-mindtree)'
+
+  ProjectIDTag:
+    Type: 'String'
+    Default: ''
+    Description: 'Entity internal project ID (comes from PMO spreadsheet subtype)'
+
+  ProjectNameTag:
+    Type: 'String'
+    Default: ''
+    Description: 'Entity internal project name as defined in JIRA'
+
+  ApplicationNameTag:
+    Type: 'String'
+    Default: ''
+    Description: 'Entity internal internal application name'
+
+  ApplicationVersionTag:
+    Type: 'String'
+    Description: 'The version of the application deployed to this resource'
+
+  CustomerTag:
+    Type: 'String'
+    Description: 'The name of the customer'
+
+  BusinessOwnerTag:
+    Type: 'String'
+    Default: ''
+    Description: 'The email address of the business owner for this resource'
+
+  TechnicalOwnerTag:
+    Type: 'String'
+    Default: ''
+    Description: 'The email address of the technical owner of this resource'
+
+  ProjectManagerTag:
+    Type: 'String'
+    Default: ''
+    Description: 'The email address of the project manager of this resource'
+
+  DepartmentTag:
+    Type: 'String'
+    Default: 'INFORMATION TECHNOLOGY'
+    Description: 'The name of the department that owns this resource'
+
+  DataPIITag:
+    Type: 'String'
+    Default: 'Yes'
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Description: 'Does this resouce hold any PII data (Yes/ No)'
+
+  DataPCITag:
+    Type: 'String'
+    Default: 'No'
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Description: 'Does this resouce hold any PCI data (Yes/No)'
+
+  DataHighestClassificationTag:
+    Type: String
+    Default: 'Confidential'
+    AllowedValues:
+      - 'Restricted'
+      - 'Confidential'
+      - 'Internal Use'
+      - 'Public'
+      - 'Unknown'
+    Description: 'The highest classification of data on this resource (Restricted/Confidential/Internal Use/Public/Unknown)'
+
+  EnvironmentTag:
+    Type: String
+    Default: 'Development'
+    AllowedValues:
+      - 'Billing'
+      - 'Sandbox'
+      - 'Development'
+      - 'Production'
+      - 'Security'
+      - 'Shared Services'
+      - 'Analytics'
+      - 'Other'
+    Description: 'The environment type (Billing/Sandbox/Development/UAT/Systest/Production/Security/Shared Services)'
+
+  ServerOSTag:
+    Type: String
+    Default: CentOS
+    AllowedValues:
+      - 'RHEL'
+      - 'CentOS'
+      - 'Custom'
+    Description: 'The Server OS (RHEL/CentOS)'
+  AMIidParam:
+    Description: 'Enter a valid AMI ID, NOTE: Only if you selected "Custom" on ServerOSTag otherwise, this value is ignored'
+    Type: String
+
+  TemplateTag:
+    Type: 'String'
+    Default: 'compute-appserverv3.yaml'
+    Description: 'The name of the CloudFormation template that created this resource'
+
+  ResourceFunctionTag:
+    Type: 'String'
+    Default: 'App Server'
+    AllowedValues:
+      - 'Network Security'
+      - 'Load Balancer'
+      - 'App Server'
+      - 'Database'
+      - 'API'
+      - 'Storage'
+    Description: 'The function of this resource (Network Security/Load Balancer/App Server/Database Server/API, Storage)'
+
+  BackupTag:
+    Type: 'String'
+    Default: 'Yes'
+    AllowedValues:
+      - 'Yes'
+      - 'No'
+    Description: 'Whether the instance is to be snapshotted daily (instance is restarted as part of the process)'
+
+  RotateImageTag:
+    Type: 'String'
+    Description: 'The value of the ImageResource tag for the AMI to be created as a rotating base image for the EC2 instance (Free Text)'
+
+  RetentionTag:
+    Type: Number
+    AllowedValues:
+      - '3'
+      - '7'
+      - '14'
+      - '21'
+    Default: 7
+    Description: 'The number of days to retain backups for (3/7/14/21) if not set it defaults to 7'
+
+  CloudwatchRegion:
+    Type: String
+    Description: 'Region for Cloudwatch Logs'
+    Default: us-east-1
+    AllowedValues:
+      - us-east-2
+      - us-east-1
+      - us-west-1
+      - us-west-2
+      - ca-central-1
+      - ap-south-1
+      - ap-northeast-2
+      - ap-northeast-1
+      - ap-southeast-2
+      - ap-southeast-1
+      - eu-central-1
+      - eu-west-1
+      - eu-west-2
+      - sa-east-1
+  S3LogConfigurationFile:
+    Type: String
+    Default: 'https://s3.amazonaws.com/s3-us-east-1-p-abg-shared-cloudformation/management/infrastructure/config-files/awslogs-abg-RHEL.cfg'
+    Description: 'S3 path to the log configuration file eg. awslogs-abg-RHEL.cfg)'
+    AllowedPattern: '\b(^https:\/\/([^\/]+)\/(.*?([^\/]+))$)\b'
+  SentinelPubKeyUrl:
+    Type: String
+    Description: 'URL to the Sentinel key PUB file'
+    Default: 'https://s3.amazonaws.com/s3-us-east-1-p-abg-shared-cloudformation/management/infrastructure/config-files/sentinel.pub'
+    AllowedPattern: '\b(^((http[s]?|ftp):\/)?\/?([^:\/\s]+)((\/\w+)*\/)([\w\-\.]+[^#?\s]+)(.*)?(#[\w\-]+)?$)\b'
+  AnsiblePubKeyUrl:
+    Type: String
+    Description: 'URL to the Ansible key PUB file'
+    Default: 'https://s3.amazonaws.com/s3-us-east-1-p-abg-shared-cloudformation/management/infrastructure/config-files/ansible.pub'
+    AllowedPattern: '\b(^((http[s]?|ftp):\/)?\/?([^:\/\s]+)((\/\w+)*\/)([\w\-\.]+[^#?\s]+)(.*)?(#[\w\-]+)?$)\b'
+
+Conditions:
+  EIP:
+    !Equals [!Ref ElasticIP, 'Yes']
+  noEIP:
+    !Equals [!Ref ElasticIP, 'No']
+  CustomOs:
+    !Equals [!Ref ServerOSTag, 'Custom']
+Mappings:
+
+  OSRegionMap:
+    us-east-1:
+      CentOS: "ami-02e98f78"
+      RHEL: "ami-a8d369c0"
+    eu-west-1:
+      CentOS: "ami-192a9460"
+      RHEL: "ami-8cff51fb"
+
+Resources:
+  NetInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref Subnet
+      GroupSet:
+        !Ref SecurityGroup
+      SourceDestCheck: true
+  EC2i:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        !Ref InstanceType
+      ImageId:
+        !FindInMap [OSRegionMap,!Ref "AWS::Region", !Ref "ServerOSTag" ]
+
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref NetInterface
+      BlockDeviceMappings:
+        -
+          DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref RootVolumeSize
+            VolumeType: 'gp2'
+        -
+          DeviceName: '/dev/sdb'
+          Ebs:
+            VolumeSize: 25
+            VolumeType: 'gp2'
+            Encrypted : true
+        -
+          DeviceName: '/dev/sdc'
+          Ebs:
+            VolumeSize:
+              !Ref AppVolumeSize
+            VolumeType: 'gp2'
+            Encrypted : true
+
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              yum update -y
+              # Start format and mount log and application volumes
+              sudo -s
+              mkfs.ext4 /dev/xvdb # Format logging volume
+              mkfs.ext4 /dev/xvdc # Format application volume
+              mkdir -p /abgapps
+              echo '/dev/xvdc   /abgapps   ext4    defaults,nofail        0       2' >> /etc/fstab
+              echo '/dev/xvdb   /var/log   ext4    defaults,nofail        0       2' >> /etc/fstab
+              mount -aF
+
+              if [ "${Hostname}" != "" ]; then
+                hostnamectl --static set-hostname ${Hostname}
+                echo ""${Hostname}"" > /var/lib/cloud/data/previous-hostname
+                echo "preserve_hostname: true" >> /etc/cloud/cloud.cfg
+              fi
+
+              # Disable NetworkManager
+              systemctl stop NetworkManager
+              systemctl disable NetworkManager
+              echo "NM_CONTROLLED=no" >> /etc/sysconfig/network-scripts/ifcfg-eth0
+              # done to prevent dhcp-opts from resetting resolv.con
+              touch /etc/dhcp/dhclient-exit-hooks
+              echo "search aws.abg.com" > /etc/resolv.conf
+              echo "nameserver 10.132.3.26" >> /etc/resolv.conf
+              echo "nameserver 10.132.2.86" >> /etc/resolv.conf
+              echo 'echo "search aws.abg.com" > /etc/resolv.conf' > /etc/dhcp/dhclient-exit-hooks
+              echo 'echo "nameserver 10.132.3.26" >> /etc/resolv.conf' >> /etc/dhcp/dhclient-exit-hooks
+              echo 'echo "nameserver 10.132.2.86" >> /etc/resolv.conf' >> /etc/dhcp/dhclient-exit-hooks
+              chmod u+x /etc/dhcp/dhclient-exit-hooks
+
+              systemctl enable network
+              systemctl restart network
+
+              # Disable ICMP redirect
+              echo "net.ipv4.conf.all.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.all.secure_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.all.send_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.default.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.default.secure_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.default.send_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.eth0.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.eth0.secure_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.eth0.send_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.lo.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.lo.secure_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.conf.lo.send_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.all.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.default.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.eth0.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.lo.accept_redirects = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.lo.stable_secret = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.all.stable_secret = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.default.stable_secret = 0" >> /etc/sysctl.conf
+              echo "net.ipv6.conf.eth0.stable_secret = 0" >> /etc/sysctl.conf
+              echo "net.ipv4.tcp_timestamps = 0" >> /etc/sysctl.conf
+              sed -i '/umask 022/c \umask 027' /etc/profile
+
+              # Start CloudWatchLogs log shipping configuration
+              yum install -y unzip
+              curl "https://s3.amazonaws.com/aws-cli/awscli-bundle.zip" -o "awscli-bundle.zip"
+              unzip awscli-bundle.zip
+              chmod -R 755 ./awscli-bundle
+              chmod -R 755 ./awscli-bundle/install
+              ./awscli-bundle/install -b ~/bin/aws
+              export PATH=~/bin:$PATH
+              curl https://s3.amazonaws.com//aws-cloudwatch/downloads/latest/awslogs-agent-setup.py -O
+              chmod +x ./awslogs-agent-setup.py
+              # Download CW Agent configuration file
+              export S3CONFIGURATIONURL=${S3LogConfigurationFile}
+              export S3CONFIGURATIONFILENAME=$(echo $S3CONFIGURATIONURL | sed 's#.*/##')
+              aws s3 cp $(sed "s/https:\/\/s3.amazonaws.com/s3:\//" <<<  $S3CONFIGURATIONURL) .
+                            
+              #Retrieve account id from instance metadata and configure log file accordingly
+              curl http://169.254.169.254/latest/dynamic/instance-identity/document/ | grep accountId > account.txt
+              sed -i 's/"//g' account.txt
+              sed -i 's/,//g' account.txt
+              sed 's/^[[:space:]]*//g' account.txt
+              tr -d '[:blank:]' < account.txt > account-no-spaces.txt
+              export ACCOUNT_NUMBER=$(cut -d ':' -f 2 account-no-spaces.txt)
+              rm -f account.txt account-no-spaces.txt
+              sed -i "s/account/$ACCOUNT_NUMBER/g" awslogs-abg-RHEL.cfg
+
+              python ./awslogs-agent-setup.py -n -r ${Region} -c $S3CONFIGURATIONFILENAME
+              service awslogs restart # Finish CloudWatchLogs configuration
+              systemctl daemon-reload
+              service rsyslog stop
+              chkconfig awslogs on
+              sudo -s
+
+              # Add user "sentinel"
+              adduser sentinel
+              # Create .ssh directory
+              mkdir /home/sentinel/.ssh
+              chown sentinel:sentinel /home/sentinel/.ssh
+              #Get&Configure Available Zone
+              mkdir  $HOME/.aws
+              EC2_AVAIL_ZONE=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+              EC2_REGION=$(sed 's/.\{1\}$//' <<< $EC2_AVAIL_ZONE)
+              mkdir ~/.aws
+              touch ~/.aws/config && echo [default] > ~/.aws/config
+              echo region = $EC2_REGION >> $HOME/.aws/config
+              # Download Sentinel Agent Public key for Rapid7 security scanning
+              export SENTINELPUBKEYURL=${SentinelPubKeyUrl}
+              export SENTINELPUBKEYFILENAME=$(echo $SENTINELPUBKEYURL | sed 's#.*/##')
+              /root/bin/aws s3 cp $(sed "s/https:\/\/s3.amazonaws.com/s3:\//" <<<  $SENTINELPUBKEYURL) .
+              cat $SENTINELPUBKEYFILENAME> /home/sentinel/.ssh/authorized_keys
+              chmod 600 /home/sentinel/.ssh/authorized_keys
+              chown -R sentinel:sentinel /home/sentinel/.ssh
+              rm -f $SENTINELPUBKEYFILENAME
+              unset SENTINELPUBKEYURL
+              unset SENTINELPUBKEYFILENAME
+
+              # Add user "ansible"
+              adduser ansible
+              # Create .ssh directory
+              mkdir /home/ansible/.ssh
+              chmod 700 /home/ansible/.ssh
+              # Add ansible public key change permissions and ownership
+              export ANSIBLEPUBKEYURL=${AnsiblePubKeyUrl}
+              export ANSIBLEPUBKEYFILENAME=$(echo $ANSIBLEPUBKEYURL | sed 's#.*/##')
+              /root/bin/aws s3 cp $(sed "s/https:\/\/s3.amazonaws.com/s3:\//" <<<  $ANSIBLEPUBKEYURL) .
+              cat $ANSIBLEPUBKEYFILENAME > /home/ansible/.ssh/authorized_keys
+              chmod 600 /home/ansible/.ssh/authorized_keys
+              chown -R ansible:ansible /home/ansible/.ssh
+              # Provide sudo access to "ansible"
+              usermod -aG wheel ansible
+              echo "ansible ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/cloud-additional-users
+              rm -f $ANSIBLEPUBKEYFILENAME
+              unset ANSIBLEPUBKEYURL
+              unset ANSIBLEPUBKEYFILENAME
+
+              #Retrieve secrets file from encrypted source
+              /root/bin/aws s3 cp s3://s3-us-east-1-p-abg-shared-cloudformation/management/infrastructure/secrets/secrets.py .
+              /root/bin/aws s3 cp s3://s3-us-east-1-p-abg-shared-cloudformation/management/infrastructure/secrets/secrets.txt .
+              chmod +x secrets.py
+              export AD_PASSWORD=$(python secrets.py secrets.txt AD_PASSWORD)
+              rm -f secrets.py secrets.txt
+
+              # Set grub password
+              /root/bin/aws s3 cp s3://s3-us-east-1-p-abg-shared-cloudformation/management/infrastructure/config-files/user.cfg /boot/grub2/user.cfg
+              chmod 600 /boot/grub2/user.cfg
+              grub2-mkconfig -o /boot/grub2/grub.cfg
+
+              # Add machine to domain
+              yum install -y sssd realmd oddjob oddjob-mkhom edir adcli samba-common samba-common-tools krb5-workstation openldap-clients policycoreutils-python
+              echo $AD_PASSWORD | realm join -U binduser aws.abg.com --computer-ou="OU=Computers,OU=abg,DC=aws,DC=abg,DC=com"
+              sed -i '/use_fully_qualified_names/c \use_fully_qualified_names = False' /etc/sssd/sssd.conf
+              sed -i '/fallback_homedir/c \fallback_homedir = /home/%u' /etc/sssd/sssd.conf
+              service realmd restart
+              service sssd restart
+
+              # sshd config modifications to enable faster auth
+              sed -i '/^#UseDNS/s/#UseDNS yes/UseDNS no/' /etc/ssh/sshd_config
+              service sshd restart
+
+              # Infosec Remediation
+              chmod -R 755 /awscli-bundle
+              chmod 750 /home/sentinel
+              chmod 750 /home/ansible
+              cp /etc/securetty /etc/securetty-BAK
+              /root/bin/aws s3 cp s3://s3-us-east-1-p-abg-shared-cloudformation/management/infrastructure/config-files/ubuntu-securetty /etc/securetty
+              umask 027
+              #clone tags
+              instanceId=$(curl http://169.254.169.254/latest/meta-data/instance-id)
+              aws lambda invoke --function-name ec2-tags-clone --payload "{\"instanceId\": \"$instanceId\"}" output.log --region $EC2_REGION
+
+              # add group to give sudoers access
+              if [ "${ProjectAdminGroup}" != "" ]; then
+                echo "%${ProjectAdminGroup}  ALL=(ALL)   ALL" >> /etc/sudoers
+              fi
+
+              # prevent cloud-init from changing mounts
+              sed -i '/^mount_default_fields/s/mount_default_fields/#mount_default_fields/' /etc/cloud/cloud.cfg
+              sed -i '/^resize_rootfs_tmp/s/resize_rootfs_tmp/#resize_rootfs_tmp/' /etc/cloud/cloud.cfg
+
+              # Set Permission configuration
+              hasPermissionCfg=""
+              if [ -n "${DenyGroups}" ]; then
+                sed -i '/access_provider/a simple_deny_groups = ${DenyGroups}' /etc/sssd/sssd.conf
+                hasPermissionCfg = "1"
+              fi
+
+              if [ -n "${DenyUsers}" ]; then
+                sed -i '/access_provider/a simple_deny_users = ${DenyUsers}' /etc/sssd/sssd.conf
+                hasPermissionCfg = "1"
+              fi
+              if [ -n "${AllowGroups}" ]; then
+                sed -i '/access_provider/a simple_allow_groups = ${AllowGroups}' /etc/sssd/sssd.conf
+                hasPermissionCfg = "1"
+              fi
+              if [ -n "${AllowUsers}" ]; then
+                sed -i '/access_provider/a simple_allow_users = ${AllowUsers}' /etc/sssd/sssd.conf
+                hasPermissionCfg="1"
+              fi
+              if [ -n "$hasPermissionCfg" ]; then
+                sed -i '/access_provider/c \access_provider = simple' /etc/sssd/sssd.conf
+              fi
+
+              # Enable AD
+              sed -i '/^ChallengeResponseAuthentication/s/ChallengeResponseAuthentication no/ChallengeResponseAuthentication yes/' /etc/ssh/sshd_config
+              service sshd restart
+
+              # Cleanup
+              unset AD_PASSWORD
+              # Reboot
+              reboot
+
+            - { Region: !Ref CloudwatchRegion, S3LogConfigurationFile: !Ref S3LogConfigurationFile, SentinelPubKeyUrl: !Ref SentinelPubKeyUrl, AnsiblePubKeyUrl: !Ref AnsiblePubKeyUrl }
+
+      IamInstanceProfile: 'aws-logger-role-EC2' # This role has to exist previous to launch this template, gives permission to write logs on CW
+      Tags:
+        - Key: Name
+          Value:
+            !Ref NameTag
+        - Key: ProjectID
+          Value:
+            !Ref ProjectIDTag
+        - Key: ProjectName
+          Value:
+            !Ref ProjectNameTag
+        - Key: ApplicationName
+          Value:
+            !Ref ApplicationNameTag
+        - Key: ApplicationVersion
+          Value:
+            !Ref ApplicationVersionTag
+        - Key: Customer
+          Value:
+            !Ref CustomerTag
+        - Key: BusinessOwner
+          Value:
+            !Ref BusinessOwnerTag
+        - Key: TechnicalOwner
+          Value:
+            !Ref TechnicalOwnerTag
+        - Key: ProjectManager
+          Value:
+            !Ref ProjectManagerTag
+        - Key: Department
+          Value:
+            !Ref DepartmentTag
+        - Key: DataPII
+          Value:
+            !Ref DataPIITag
+        - Key: DataPCI
+          Value:
+            !Ref DataPCITag
+        - Key: DataHighestClassification
+          Value:
+            !Ref DataHighestClassificationTag
+        - Key: Environment
+          Value:
+            !Ref EnvironmentTag
+        - Key: ServerOS
+          Value:
+            !Ref ServerOSTag
+        - Key: Template
+          Value:
+            !Ref TemplateTag
+        - Key: ResourceFunction
+          Value:
+            !Ref ResourceFunctionTag
+        - Key: Backup
+          Value:
+            !Ref BackupTag
+        - Key: RotateImage
+          Value:
+            !Ref RotateImageTag
+        - Key: Retention
+          Value:
+            !Ref RetentionTag
+
+      KeyName:
+        !Ref KeyPair
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Condition: EIP
+    DependsOn: EC2i
+    Properties:
+      InstanceId:
+        !Ref EC2i
+      Domain:
+        !Ref VPC
