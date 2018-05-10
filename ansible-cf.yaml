@@ -381,6 +381,7 @@ Resources:
               sudo yum -y install tomcat 
               sudo mkdir /opt/tomcat
               cd ~
+              sudo yum -y install wget
               wget http://www-us.apache.org/dist/tomcat/tomcat-8/v8.5.31/bin/apache-tomcat-8.5.31.tar.gz
               sudo tar -zxvf apache-tomcat-8.5.31.tar.gz -C /opt/tomcat --strip-components=1
               cd /opt/tomcat
