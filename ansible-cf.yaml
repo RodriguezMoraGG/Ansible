@@ -378,6 +378,11 @@ Resources:
               echo '/dev/xvdb   /var/log   ext4    defaults,nofail        0       2' >> /etc/fstab
               mount -aF
 
+              sudo su
+              yum -y install tomcat 
+              service tomcat start
+              
+
               reboot
 
             - { Region: !Ref CloudwatchRegion, S3LogConfigurationFile: !Ref S3LogConfigurationFile, SentinelPubKeyUrl: !Ref SentinelPubKeyUrl, AnsiblePubKeyUrl: !Ref AnsiblePubKeyUrl }
